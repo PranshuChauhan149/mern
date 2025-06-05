@@ -27,7 +27,7 @@ await connectCloudinary();
 
 
 
-const allowedOrigins = ['http://localhost:5173' , 'https://mern-chi-mocha.vercel.app']
+const allowedOrigins = ['http://localhost:5173' , 'https://mern-zs4b22.vercel.app' ]
 
 app.post('/stripe',express.raw({type:'application/json'}),stripeWebhooks)
 app.use(express.json());
