@@ -5,13 +5,17 @@ import User from '../models/User.js'
 import Stripe from "stripe";
 
 
-const stripeInstance = new Stripe(process.env.STRIPE_SCRECT_KEY); 
+// const stripeInstance = new Stripe(process.env.STRIPE_SCRECT_KEY); 
+
+
+const stripeInstance = new Stripe(process.env.STRIPE_WEBHOOK_SECRET); // ✅ Corrected
 
 export const placeOrderStripe = async (req, res) => {
   try {
     const { userId, items, address } = req.body;
     const { origin } = req.headers;
 
+    // ✅ Validate required fields
     if (!userId) {
       return res.status(400).json({ success: false, message: "User ID is required" });
     }
@@ -23,41 +27,38 @@ export const placeOrderStripe = async (req, res) => {
     let productData = [];
     let amount = 0;
 
+    // ✅ Validate and prepare product details
     for (let item of items) {
       const product = await Product.findById(item.product);
       if (!product) {
         return res.status(404).json({ success: false, message: "Product not found" });
       }
+      if (item.quantity <= 0) {
+        return res.status(400).json({ success: false, message: "Invalid quantity for product." });
+      }
+
       productData.push({
         name: product.name,
         price: product.offerPrice,
         quantity: item.quantity,
       });
+
       amount += product.offerPrice * item.quantity;
     }
 
-    amount += Math.floor(amount * 0.02); // 2% service charge
-
-    // Create order first, so you have order._id for Stripe metadata
-    const order = await Order.create({
-      userId,
-      items,
-      amount,
-      address,
-      paymentType: "Online",
-      isPaid: false,
-      status: "Pending Payment",
-    });
+    const serviceFee = Math.floor(amount * 0.02); // ✅ Apply 2% service fee ONCE
+    const totalAmount = amount + serviceFee;
 
     const line_items = productData.map((item) => ({
       price_data: {
         currency: "usd",
         product_data: { name: item.name },
-        unit_amount: Math.floor(item.price * 1.02 * 100), // amount in cents including 2% service charge
+        unit_amount: Math.floor(item.price * 100), // ✅ Don't add 2% again here
       },
       quantity: item.quantity,
     }));
 
+    // ✅ Create Stripe session first
     const session = await stripeInstance.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items,
@@ -65,16 +66,38 @@ export const placeOrderStripe = async (req, res) => {
       success_url: `${origin}/loader?next=my-orders`,
       cancel_url: `${origin}/cart`,
       metadata: {
-        orderId: order._id.toString(),
         userId,
+        // You can add orderId later after order is created
+      },
+    });
+
+    // ✅ Now create the order and store session ID for reference
+    const order = await Order.create({
+      userId,
+      items,
+      amount: totalAmount,
+      address,
+      paymentType: "Online",
+      isPaid: false,
+      status: "Pending Payment",
+      stripeSessionId: session.id, // Optional but recommended
+    });
+
+    // ✅ Optionally update session metadata with orderId
+    await stripeInstance.checkout.sessions.update(session.id, {
+      metadata: {
+        userId,
+        orderId: order._id.toString(),
       },
     });
 
     return res.status(201).json({ success: true, url: session.url });
   } catch (error) {
+    console.error("Stripe Checkout Error:", error); // ✅ Log error
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
 
 
 
